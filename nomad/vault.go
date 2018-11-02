@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -127,7 +128,7 @@ type VaultClient interface {
 	Running() bool
 
 	// Stats returns the Vault clients statistics
-	Stats() *VaultStats
+	Stats() map[string]string
 
 	// EmitStats emits that clients statistics at the given period until stopCh
 	// is called.
@@ -140,6 +141,9 @@ type VaultStats struct {
 	// TrackedForRevoke is the count of tokens that are being tracked to be
 	// revoked since they could not be immediately revoked.
 	TrackedForRevoke int
+
+	// TokenTTL is the time-to-live duration for the current token
+	TokenTTL time.Duration
 }
 
 // PurgeVaultAccessor is called to remove VaultAccessors from the system. If
@@ -1208,14 +1212,24 @@ func (v *vaultClient) setLimit(l rate.Limit) {
 	v.limiter = rate.NewLimiter(l, int(l))
 }
 
-// Stats is used to query the state of the blocked eval tracker.
-func (v *vaultClient) Stats() *VaultStats {
+func (v *vaultClient) Stats() map[string]string {
+	stat := v.stats()
+
+	return map[string]string{
+		"tracked_for_revoked": strconv.Itoa(stat.TrackedForRevoke),
+		"token_ttl":           stat.TokenTTL.String(),
+	}
+}
+
+func (v *vaultClient) stats() *VaultStats {
 	// Allocate a new stats struct
 	stats := new(VaultStats)
 
 	v.revLock.Lock()
 	stats.TrackedForRevoke = len(v.revoking)
 	v.revLock.Unlock()
+
+	stats.TokenTTL = tokenTTL(v.tokenData)
 
 	return stats
 }
@@ -1225,9 +1239,9 @@ func (v *vaultClient) EmitStats(period time.Duration, stopCh chan struct{}) {
 	for {
 		select {
 		case <-time.After(period):
-			stats := v.Stats()
+			stats := v.stats()
 			metrics.SetGauge([]string{"nomad", "vault", "distributed_tokens_revoking"}, float32(stats.TrackedForRevoke))
-			metrics.SetGauge([]string{"nomad", "vault", "token_ttl"}, float32(tokenTTL(v.tokenData)/time.Millisecond))
+			metrics.SetGauge([]string{"nomad", "vault", "token_ttl"}, float32(stats.TokenTTL/time.Millisecond))
 		case <-stopCh:
 			return
 		}
