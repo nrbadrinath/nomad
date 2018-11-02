@@ -210,10 +210,6 @@ type vaultClient struct {
 	tomb   *tomb.Tomb
 	logger log.Logger
 
-	// stats stores the stats
-	stats     *VaultStats
-	statsLock sync.RWMutex
-
 	// l is used to lock the configuration aspects of the client such that
 	// multiple callers can't cause conflicting config updates
 	l sync.Mutex
@@ -237,7 +233,6 @@ func NewVaultClient(c *config.VaultConfig, logger log.Logger, purgeFn PurgeVault
 		revoking: make(map[*structs.VaultAccessor]time.Time),
 		purgeFn:  purgeFn,
 		tomb:     &tomb.Tomb{},
-		stats:    new(VaultStats),
 	}
 
 	if v.config.IsEnabled() {
@@ -1054,13 +1049,11 @@ func (v *vaultClient) RevokeTokens(ctx context.Context, accessors []*structs.Vau
 // time.
 func (v *vaultClient) storeForRevocation(accessors []*structs.VaultAccessor) {
 	v.revLock.Lock()
-	v.statsLock.Lock()
+
 	now := time.Now()
 	for _, a := range accessors {
 		v.revoking[a] = now.Add(time.Duration(a.CreationTTL) * time.Second)
 	}
-	v.stats.TrackedForRevoke = len(v.revoking)
-	v.statsLock.Unlock()
 	v.revLock.Unlock()
 }
 
@@ -1181,12 +1174,9 @@ func (v *vaultClient) revokeDaemon() {
 
 			// Can delete from the tracked list now that we have purged
 			v.revLock.Lock()
-			v.statsLock.Lock()
 			for _, va := range revoking {
 				delete(v.revoking, va)
 			}
-			v.stats.TrackedForRevoke = len(v.revoking)
-			v.statsLock.Unlock()
 			v.revLock.Unlock()
 
 		}
@@ -1223,11 +1213,9 @@ func (v *vaultClient) Stats() *VaultStats {
 	// Allocate a new stats struct
 	stats := new(VaultStats)
 
-	v.statsLock.RLock()
-	defer v.statsLock.RUnlock()
-
-	// Copy all the stats
-	stats.TrackedForRevoke = v.stats.TrackedForRevoke
+	v.revLock.Lock()
+	stats.TrackedForRevoke = len(v.revoking)
+	v.revLock.Unlock()
 
 	return stats
 }
