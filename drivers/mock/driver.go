@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	hclog "github.com/hashicorp/go-hclog"
@@ -109,6 +110,15 @@ type Driver struct {
 	signalShutdown context.CancelFunc
 
 	shutdownFingerprintTime time.Time
+
+	// lastDriverTaskConfig is the last *drivers.TaskConfig passed to StartTask
+	lastDriverTaskConfig *drivers.TaskConfig
+
+	// lastTaskConfig is the last decoded *TaskConfig created by StartTask
+	lastTaskConfig *TaskConfig
+
+	// lastMu guards access to last[Driver]TaskConfig
+	lastMu sync.Mutex
 
 	// logger will log to the Nomad agent
 	logger hclog.Logger
@@ -298,6 +308,12 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *cstru
 		return nil, nil, err
 	}
 
+	// Store last configs
+	d.lastMu.Lock()
+	d.lastDriverTaskConfig = cfg
+	d.lastTaskConfig = &driverConfig
+	d.lastMu.Unlock()
+
 	if driverConfig.StartBlockFor != 0 {
 		time.Sleep(driverConfig.StartBlockFor)
 	}
@@ -454,4 +470,13 @@ func (d *Driver) ExecTask(taskID string, cmd []string, timeout time.Duration) (*
 		ExitResult: &drivers.ExitResult{},
 	}
 	return &res, nil
+}
+
+// GetTaskConfig is unique to the mock driver and for testing purposes only. It
+// returns the *drivers.TaskConfig passed to StartTask and the decoded
+// *mock.TaskConfig created by the last StartTask call.
+func (d *Driver) GetTaskConfig() (*drivers.TaskConfig, *TaskConfig) {
+	d.lastMu.Lock()
+	defer d.lastMu.Unlock()
+	return d.lastDriverTaskConfig, d.lastTaskConfig
 }
