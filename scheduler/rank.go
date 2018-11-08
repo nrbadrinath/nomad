@@ -351,7 +351,7 @@ OUTER:
 
 		// Score the device affinity
 		if devicesWithAffinities != 0 {
-			deviceAffinityScore /= float64(devicesWithAffinities)
+			deviceAffinityScore /= devicesWithAffinities
 			option.Scores = append(option.Scores, deviceAffinityScore)
 			iter.ctx.Metrics().ScoreNode(option.Node, "devices", deviceAffinityScore)
 		}
