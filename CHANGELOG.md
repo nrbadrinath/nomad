@@ -2,6 +2,9 @@
 
 __BACKWARDS INCOMPATIBILITIES:__
  * core: Switch to structured logging using [go-hclog](https://github.com/hashicorp/go-hclog)
+ * client: Task config interpolation requires names to be valid identifiers
+   (`node.region` or `NOMAD_DC`). Interpolating other variables requires a new
+   indexing syntax: `env[".invalid.identifier."]`. [[GH-4843](https://github.com/hashicorp/nomad/issues/4843)]
 
 IMPROVEMENTS:
  * core: Added advertise address to client node meta data [[GH-4390](https://github.com/hashicorp/nomad/issues/4390)]
