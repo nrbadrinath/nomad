@@ -214,9 +214,6 @@ type vaultClient struct {
 	// childTTL is the TTL for child tokens.
 	childTTL string
 
-	// lastRenewed is the time the token was last renewed
-	lastRenewed time.Time
-
 	tomb   *tomb.Tomb
 	logger log.Logger
 
@@ -484,9 +481,6 @@ func (v *vaultClient) renewalLoop() {
 
 			// Successfully renewed
 			if err == nil {
-				// If we take the expiration (lastRenewed + auth duration) and
-				// subtract the current time, we get a duration until expiry.
-				// Set the timer to poke us after half of that time is up.
 				durationUntilRenew := currentExpiration.Sub(time.Now()) / 2
 
 				v.logger.Info("successfully renewed token", "next_renewal", durationUntilRenew)
@@ -560,7 +554,7 @@ func nextBackoff(backoff float64, expiry time.Time) float64 {
 }
 
 // renew attempts to renew our Vault token. If the renewal fails, an error is
-// returned. This method updates the lastRenewed time
+// returned.
 func (v *vaultClient) renew() error {
 	// Track how long the request takes
 	defer metrics.MeasureSince([]string{"nomad", "vault", "renew"}, time.Now())
@@ -578,7 +572,6 @@ func (v *vaultClient) renew() error {
 		return fmt.Errorf("renewal successful but no lease duration returned")
 	}
 
-	v.lastRenewed = time.Now()
 	v.logger.Debug("successfully renewed server token")
 	return nil
 }
