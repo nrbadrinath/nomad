@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"golang.org/x/time/rate"
 
 	"github.com/hashicorp/nomad/helper"
@@ -1114,7 +1116,7 @@ func TestVaultClient_RevokeTokens_PreEstablishs(t *testing.T) {
 		t.Fatalf("didn't add to revoke loop")
 	}
 
-	if client.Stats().TrackedForRevoke != 2 {
+	if client.stats().TrackedForRevoke != 2 {
 		t.Fatalf("didn't add to revoke loop")
 	}
 }
@@ -1298,49 +1300,133 @@ func TestVaultClient_nextBackoff(t *testing.T) {
 	})
 }
 
-func TestVaultClient_tokenTTL(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name         string
-		creationTime int64
-		creationTTL  int
-		ttl          time.Duration
-	}{
-		{
-			"in future",
-			time.Now().Unix() - 1000,
-			2500,
-			1500 * time.Second,
-		},
-		{
-			"in past",
-			time.Now().Unix() - 2000,
-			1000,
-			-1000 * time.Second,
-		},
+func TestParseVaultToken(t *testing.T) {
+	parseDate := func(str string) time.Time {
+		v, err := time.Parse(vaultDateLayout, str)
+		if err != nil {
+			t.Fatalf("unexpected time format for %v: %v", str, err)
+		}
+		return v
 	}
 
-	tolerance := 2 * time.Second
+	cases := []struct {
+		name     string
+		expected tokenData
+		input    map[string]interface{}
+	}{
+		{
+			"basic value",
+			tokenData{
+				CreationTTL:      2764800,
+				TTL:              2764790,
+				Renewable:        true,
+				Policies:         []string{"default", "testgroup2-policy"},
+				Role:             "sample-role",
+				ExpireTimeString: "2018-05-19T11:35:54.466476215-04:00",
+
+				Root:       false,
+				ExpireTime: parseDate("2018-05-19T11:35:54.466476215-04:00"),
+			},
+			map[string]interface{}{
+				"accessor":          "8609694a-cdbc-db9b-d345-e782dbb562ed",
+				"creation_time":     1523979354,
+				"creation_ttl":      2764800,
+				"display_name":      "ldap2-tesla",
+				"entity_id":         "7d2e3179-f69b-450c-7179-ac8ee8bd8ca9",
+				"expire_time":       "2018-05-19T11:35:54.466476215-04:00",
+				"explicit_max_ttl":  0,
+				"id":                "cf64a70f-3a12-3f6c-791d-6cef6d390eed",
+				"identity_policies": []string{"dev-group-policy"},
+				"issue_time":        "2018-04-17T11:35:54.466476078-04:00",
+				"meta": map[string]string{
+					"username": "tesla",
+				},
+				"role":     "sample-role",
+				"num_uses": 0,
+				"orphan":   true,
+				"path":     "auth/ldap2/login/tesla",
+				"policies": []string{
+					"default",
+					"testgroup2-policy",
+				},
+				"renewable": true,
+				"ttl":       2764790,
+			},
+		},
+		{
+			"basic value but without expiry",
+			tokenData{
+				CreationTTL: 2764800,
+				TTL:         2764790,
+				Renewable:   true,
+				Policies:    []string{"default", "testgroup2-policy"},
+				Role:        "sample-role",
+
+				Root:       false,
+				ExpireTime: time.Now().Add(2764790 * time.Second),
+			},
+			map[string]interface{}{
+				"accessor":      "8609694a-cdbc-db9b-d345-e782dbb562ed",
+				"creation_time": 1523979354,
+				"creation_ttl":  2764800,
+				"display_name":  "ldap2-tesla",
+				"entity_id":     "7d2e3179-f69b-450c-7179-ac8ee8bd8ca9",
+				// "expire_time":       "2018-05-19T11:35:54.466476215-04:00",
+				"explicit_max_ttl":  0,
+				"id":                "cf64a70f-3a12-3f6c-791d-6cef6d390eed",
+				"identity_policies": []string{"dev-group-policy"},
+				"issue_time":        "2018-04-17T11:35:54.466476078-04:00",
+				"meta": map[string]string{
+					"username": "tesla",
+				},
+				"role":     "sample-role",
+				"num_uses": 0,
+				"orphan":   true,
+				"path":     "auth/ldap2/login/tesla",
+				"policies": []string{
+					"default",
+					"testgroup2-policy",
+				},
+				"renewable": true,
+				"ttl":       2764790,
+			},
+		},
+		{
+			"root token",
+			tokenData{
+				Policies: []string{"root"},
+				Root:     true,
+			},
+			map[string]interface{}{
+				"accessor":         "2y5UTs1azS4nWDeBCSBXmQsn",
+				"creation_time":    1541775054,
+				"creation_ttl":     0,
+				"display_name":     "root",
+				"entity_id":        "",
+				"expire_time":      nil,
+				"explicit_max_ttl": 0,
+				"id":               "8tR2Io18hX6vQJh3eUjPBy1I",
+				"meta":             nil,
+				"num_uses":         0,
+				"orphan":           true,
+				"path":             "auth/token/root",
+				"policies":         []string{"root"},
+				"ttl":              0,
+			},
+		},
+	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tokenData := &tokenData{
-				CreationTTL:  c.creationTTL,
-				CreationTime: int(c.creationTime),
-			}
+			parsed, err := parseTokenData(c.input)
+			require.NoError(t, err)
 
-			found := tokenTTL(tokenData)
-			if !(c.ttl-tolerance <= found && found <= c.ttl+tolerance) {
-				t.Fatalf("wrong token ttl, expected=%s found=%s", c.ttl, found)
-			}
+			// check expiry with grace period
+			require.WithinDuration(t, c.expected.ExpireTime, parsed.ExpireTime, 2*time.Second)
+
+			c.expected.ExpireTime = time.Time{}
+			parsed.ExpireTime = time.Time{}
+			require.Equal(t, c.expected, parsed)
 		})
 	}
-
-	t.Run("nil case", func(t *testing.T) {
-		found := tokenTTL(nil)
-		if found != 0 {
-			t.Fatalf("expected 0 ttl but found=%s", found)
-		}
-	})
 }

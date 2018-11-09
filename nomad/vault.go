@@ -144,6 +144,9 @@ type VaultStats struct {
 
 	// TokenTTL is the time-to-live duration for the current token
 	TokenTTL time.Duration
+
+	//T TokenExpiry Time is the recoreded expiry time of the current token
+	TokenExpiry time.Time
 }
 
 // PurgeVaultAccessor is called to remove VaultAccessors from the system. If
@@ -154,13 +157,16 @@ type PurgeVaultAccessorFn func(accessors []*structs.VaultAccessor) error
 // tokenData holds the relevant information about the Vault token passed to the
 // client.
 type tokenData struct {
-	CreationTTL  int      `mapstructure:"creation_ttl"`
-	CreationTime int      `mapstructure:"creation_time"`
-	TTL          int      `mapstructure:"ttl"`
-	Renewable    bool     `mapstructure:"renewable"`
-	Policies     []string `mapstructure:"policies"`
-	Role         string   `mapstructure:"role"`
-	Root         bool
+	CreationTTL      int      `mapstructure:"creation_ttl"`
+	TTL              int      `mapstructure:"ttl"`
+	Renewable        bool     `mapstructure:"renewable"`
+	Policies         []string `mapstructure:"policies"`
+	Role             string   `mapstructure:"role"`
+	ExpireTimeString string   `mapstructure:"expire_time"`
+
+	// computed fields
+	Root       bool
+	ExpireTime time.Time
 }
 
 // vaultClient is the Servers implementation of the VaultClient interface. The
@@ -474,7 +480,7 @@ func (v *vaultClient) renewalLoop() {
 		case <-authRenewTimer.C:
 			// Renew the token and determine the new expiration
 			err := v.renew()
-			currentExpiration := v.lastRenewed.Add(time.Duration(v.tokenData.CreationTTL) * time.Second)
+			currentExpiration := v.tokenData.ExpireTime
 
 			// Successfully renewed
 			if err == nil {
@@ -595,6 +601,37 @@ func (v *vaultClient) getWrappingFn() func(operation, path string) string {
 	}
 }
 
+const vaultDateLayout = time.RFC3339Nano
+
+func parseTokenData(s map[string]interface{}) (tokenData, error) {
+	// Read and parse the fields
+	var data tokenData
+	if err := mapstructure.WeakDecode(s, &data); err != nil {
+		return data, fmt.Errorf("failed to parse Vault token's data block: %v", err)
+	}
+
+	root := false
+	for _, p := range data.Policies {
+		if p == "root" {
+			root = true
+			break
+		}
+	}
+
+	// Store the token data
+	data.Root = root
+
+	if data.ExpireTimeString != "" {
+		if d, err := time.Parse(vaultDateLayout, data.ExpireTimeString); err == nil {
+			data.ExpireTime = d
+		}
+	} else if data.TTL != 0 {
+		data.ExpireTime = time.Now().Add(time.Duration(data.TTL) * time.Second)
+	}
+
+	return data, nil
+}
+
 // parseSelfToken looks up the Vault token in Vault and parses its data storing
 // it in the client. If the token is not valid for Nomads purposes an error is
 // returned.
@@ -614,22 +651,10 @@ func (v *vaultClient) parseSelfToken() error {
 	}
 	self = secret
 
-	// Read and parse the fields
-	var data tokenData
-	if err := mapstructure.WeakDecode(self.Data, &data); err != nil {
-		return fmt.Errorf("failed to parse Vault token's data block: %v", err)
+	data, err := parseTokenData(self.Data)
+	if err != nil {
+		return err
 	}
-
-	root := false
-	for _, p := range data.Policies {
-		if p == "root" {
-			root = true
-			break
-		}
-	}
-
-	// Store the token data
-	data.Root = root
 	v.tokenData = &data
 
 	// The criteria that must be met for the token to be valid are as follows:
@@ -649,15 +674,10 @@ func (v *vaultClient) parseSelfToken() error {
 
 	var mErr multierror.Error
 	role := v.getRole()
-	if !root {
+	if !data.Root {
 		// All non-root tokens must be renewable
 		if !data.Renewable {
 			multierror.Append(&mErr, fmt.Errorf("Vault token is not renewable or root"))
-		}
-
-		// All non-root tokens must have creation time
-		if data.CreationTime == 0 {
-			multierror.Append(&mErr, fmt.Errorf("invalid lease creation time of zero"))
 		}
 
 		// All non-root tokens must have a lease duration
@@ -686,7 +706,7 @@ func (v *vaultClient) parseSelfToken() error {
 	}
 
 	// Check we have the correct capabilities
-	if err := v.validateCapabilities(role, root); err != nil {
+	if err := v.validateCapabilities(role, data.Root); err != nil {
 		multierror.Append(&mErr, err)
 	}
 
@@ -1215,9 +1235,16 @@ func (v *vaultClient) setLimit(l rate.Limit) {
 func (v *vaultClient) Stats() map[string]string {
 	stat := v.stats()
 
+	expireTimeStr := ""
+
+	if !stat.TokenExpiry.IsZero() {
+		expireTimeStr = stat.TokenExpiry.Format(time.RFC3339)
+	}
+
 	return map[string]string{
 		"tracked_for_revoked": strconv.Itoa(stat.TrackedForRevoke),
 		"token_ttl":           stat.TokenTTL.String(),
+		"token_expire_time":   expireTimeStr,
 	}
 }
 
@@ -1229,7 +1256,12 @@ func (v *vaultClient) stats() *VaultStats {
 	stats.TrackedForRevoke = len(v.revoking)
 	v.revLock.Unlock()
 
-	stats.TokenTTL = tokenTTL(v.tokenData)
+	if v.tokenData != nil {
+		stats.TokenExpiry = v.tokenData.ExpireTime
+		if !v.tokenData.ExpireTime.IsZero() {
+			stats.TokenTTL = time.Until(v.tokenData.ExpireTime)
+		}
+	}
 
 	return stats
 }
@@ -1246,13 +1278,4 @@ func (v *vaultClient) EmitStats(period time.Duration, stopCh chan struct{}) {
 			return
 		}
 	}
-}
-
-func tokenTTL(tokenData *tokenData) time.Duration {
-	if tokenData == nil {
-		return time.Duration(0)
-	}
-
-	ttl := int64(tokenData.CreationTime+tokenData.CreationTTL) - time.Now().Unix()
-	return time.Duration(ttl) * time.Second
 }
