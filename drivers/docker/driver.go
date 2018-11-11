@@ -212,6 +212,7 @@ var (
 		"readonly_rootfs": hclspec.NewAttr("readonly_rootfs", "bool", false),
 		"security_opt":    hclspec.NewAttr("security_opt", "list(string)", false),
 		"shm_size":        hclspec.NewAttr("shm_size", "number", false),
+		"storage_opt":     hclspec.NewAttr("storage_opt", "map(string)", false),
 		"sysctl":          hclspec.NewAttr("sysctl", "map(string)", false),
 		"tty":             hclspec.NewAttr("tty", "bool", false),
 		"ulimit":          hclspec.NewAttr("ulimit", "map(string)", false),
@@ -298,6 +299,7 @@ type TaskConfig struct {
 	PortMap           map[string]int    `codec:"port_map"`
 	Privileged        bool              `codec:"privileged"`
 	ReadonlyRootfs    bool              `codec:"readonly_rootfs"`
+	StorageOpt        map[string]string `codec:"storage_opt"`
 	SecurityOpt       []string          `codec:"security_opt"`
 	ShmSize           int64             `codec:"shm_size"`
 	Sysctl            map[string]string `codec:"sysctl"`
@@ -990,7 +992,8 @@ func (d *Driver) createContainerConfig(task *drivers.TaskConfig, driverConfig *T
 
 		VolumeDriver: driverConfig.VolumeDriver,
 
-		PidsLimit: driverConfig.PidsLimit,
+		PidsLimit:  driverConfig.PidsLimit,
+		StorageOpt: driverConfig.StorageOpt,
 	}
 
 	// Calculate CPU Quota
