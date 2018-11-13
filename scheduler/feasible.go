@@ -400,18 +400,14 @@ func (c *ConstraintChecker) Feasible(option *structs.Node) bool {
 func (c *ConstraintChecker) meetsConstraint(constraint *structs.Constraint, option *structs.Node) bool {
 	// Resolve the targets. Targets that are not present are treated as `nil`.
 	// This is to allow for matching constraints where a target is not present.
-	//
-	// TODO: There may be a case where there is a distinction between not
-	// present and nil, but I'm not aware of it. Perhaps we should plum this to
-	// checkConstraint and add an extra level of validation?
-	lVal, _ := resolveTarget(constraint.LTarget, option)
-	rVal, _ := resolveTarget(constraint.RTarget, option)
+	lVal, lOk := resolveTarget(constraint.LTarget, option)
+	rVal, rOk := resolveTarget(constraint.RTarget, option)
 
 	// Check if satisfied
-	return checkConstraint(c.ctx, constraint.Operand, lVal, rVal)
+	return checkConstraint(c.ctx, constraint.Operand, lVal, rVal, lOk, rOk)
 }
 
-// resolveTarget is used to resolve the LTarget and RTarget of a Constraint
+// resolveTarget is used to resolve the LTarget and RTarget of a Constraint.
 func resolveTarget(target string, node *structs.Node) (interface{}, bool) {
 	// If no prefix, this must be a literal value
 	if !strings.HasPrefix(target, "${") {
@@ -449,7 +445,7 @@ func resolveTarget(target string, node *structs.Node) (interface{}, bool) {
 
 // checkConstraint checks if a constraint is satisfied. The lVal and rVal
 // interfaces may be nil.
-func checkConstraint(ctx Context, operand string, lVal, rVal interface{}) bool {
+func checkConstraint(ctx Context, operand string, lVal, rVal interface{}, lFound, rFound bool) bool {
 	// Check for constraints not handled by this checker.
 	switch operand {
 	case structs.ConstraintDistinctHosts, structs.ConstraintDistinctProperty:
@@ -465,6 +461,10 @@ func checkConstraint(ctx Context, operand string, lVal, rVal interface{}) bool {
 		return !reflect.DeepEqual(lVal, rVal)
 	case "<", "<=", ">", ">=":
 		return checkLexicalOrder(operand, lVal, rVal)
+	case structs.ConstraintAttributeIsSet:
+		return lFound
+	case structs.ConstraintAttributeIsNotSet:
+		return !lFound
 	case structs.ConstraintVersion:
 		return checkVersionMatch(ctx, lVal, rVal)
 	case structs.ConstraintRegex:
@@ -480,7 +480,8 @@ func checkConstraint(ctx Context, operand string, lVal, rVal interface{}) bool {
 
 // checkAffinity checks if a specific affinity is satisfied
 func checkAffinity(ctx Context, operand string, lVal, rVal interface{}) bool {
-	return checkConstraint(ctx, operand, lVal, rVal)
+	// We pass ok here for both values, because matchesAffinity prevalidates these
+	return checkConstraint(ctx, operand, lVal, rVal, true, true)
 }
 
 // checkAttributeAffinity checks if an affinity is satisfied

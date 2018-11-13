@@ -304,6 +304,7 @@ func TestResolveConstraintTarget(t *testing.T) {
 		{
 			target: "${attr.rand}",
 			node:   node,
+			val:    "",
 			result: false,
 		},
 		{
@@ -315,6 +316,7 @@ func TestResolveConstraintTarget(t *testing.T) {
 		{
 			target: "${meta.rand}",
 			node:   node,
+			val:    "",
 			result: false,
 		},
 	}
@@ -431,7 +433,7 @@ func TestCheckConstraint(t *testing.T) {
 
 	for _, tc := range cases {
 		_, ctx := testContext(t)
-		if res := checkConstraint(ctx, tc.op, tc.lVal, tc.rVal); res != tc.result {
+		if res := checkConstraint(ctx, tc.op, tc.lVal, tc.rVal, tc.lVal != nil, tc.rVal != nil); res != tc.result {
 			t.Fatalf("TC: %#v, Result: %v", tc, res)
 		}
 	}
