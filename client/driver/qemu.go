@@ -82,6 +82,8 @@ type qemuHandle struct {
 	version        string
 	waitCh         chan *dstructs.WaitResult
 	doneCh         chan struct{}
+	net            *cstructs.DriverNetwork
+
 }
 
 // getMonitorPath is used to determine whether a qemu monitor socket can be
@@ -342,6 +344,12 @@ func (d *QemuDriver) Start(ctx *ExecContext, task *structs.Task) (*StartResponse
 	}
 	d.logger.Printf("[INFO] driver.qemu: started new QemuVM: %s", vmID)
 
+	net := &cstructs.DriverNetwork{
+		PortMap:       d.driverConfig.PortMap[0],
+		IP:            "172.19.134.11", //Add new param to job config?
+		AutoAdvertise: true,
+	}
+
 	// Create and Return Handle
 	maxKill := d.DriverContext.config.MaxKillTimeout
 	h := &qemuHandle{
@@ -356,14 +364,15 @@ func (d *QemuDriver) Start(ctx *ExecContext, task *structs.Task) (*StartResponse
 		logger:         d.logger,
 		doneCh:         make(chan struct{}),
 		waitCh:         make(chan *dstructs.WaitResult, 1),
+		net:		net,
 	}
 	go h.run()
-	resp := &StartResponse{Handle: h}
-	if len(d.driverConfig.PortMap) == 1 {
-		resp.Network = &cstructs.DriverNetwork{
-			PortMap: d.driverConfig.PortMap[0],
-		}
-	}
+	resp := &StartResponse{Handle: h, Network: net,}
+	//if len(d.driverConfig.PortMap) == 1 {
+       //	resp.Network = &cstructs.DriverNetwork{
+       //			PortMap: d.driverConfig.PortMap[0],
+//		}
+//	}
 	return resp, nil
 }
 
@@ -409,6 +418,7 @@ func (d *QemuDriver) Open(ctx *ExecContext, handleID string) (DriverHandle, erro
 		version:        id.Version,
 		doneCh:         make(chan struct{}),
 		waitCh:         make(chan *dstructs.WaitResult, 1),
+		net:		nil,
 	}
 	go h.run()
 	return h, nil
@@ -453,8 +463,8 @@ func (h *qemuHandle) Signal(s os.Signal) error {
 	return fmt.Errorf("Qemu driver can't send signals")
 }
 
-func (d *qemuHandle) Network() *cstructs.DriverNetwork {
-	return nil
+func (h *qemuHandle) Network() *cstructs.DriverNetwork {
+	return h.net
 }
 
 func (h *qemuHandle) Kill() error {
