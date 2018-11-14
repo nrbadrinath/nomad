@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/nomad/plugins/base"
 	"github.com/hashicorp/nomad/plugins/drivers/proto"
 	"github.com/hashicorp/nomad/plugins/shared/hclspec"
+	sproto "github.com/hashicorp/nomad/plugins/shared/structs/proto"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/status"
 )
@@ -130,7 +131,7 @@ func (d *driverPluginClient) StartTask(c *TaskConfig) (*TaskHandle, *cstructs.Dr
 	if err != nil {
 		st := status.Convert(err)
 		if len(st.Details()) > 0 {
-			if rec, ok := st.Details()[0].(*proto.RecoverableError); ok {
+			if rec, ok := st.Details()[0].(*sproto.RecoverableError); ok {
 				return nil, nil, structs.NewRecoverableError(err, rec.Recoverable)
 			}
 		}
