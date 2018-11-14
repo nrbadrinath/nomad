@@ -85,6 +85,8 @@ all groups (and tasks) in the job.
     regexp
     set_contains
     version
+    is_set
+    is_not_set
     ```
 
     For a detailed explanation of these values and their behavior, please see
@@ -195,6 +197,12 @@ constraint {
       value     = ">= 0.1.0, < 0.2"
     }
     ```
+
+- `"is_set"` - Specifies that a given attribute must be present. This can be
+  used with features like `!=` to require that an attribute has been configured,
+  but to omit particular values.
+
+- `"is_not_set"` - Specifies that a given attribute must not be present. 
 
 ## `constraint` Examples
 
